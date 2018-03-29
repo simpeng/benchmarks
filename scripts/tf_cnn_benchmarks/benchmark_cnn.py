@@ -54,6 +54,39 @@ from models import model_config
 from platforms import util as platforms_util
 
 
+# pengwa
+from tensorflow.python.profiler import model_analyzer
+from tensorflow.python.profiler import option_builder
+# pengwa
+from tensorflow.core.protobuf import rewriter_config_pb2
+from tensorflow.core.framework import attr_value_pb2
+# pengwa
+import json
+from tensorflow.python.client import timeline
+
+class TimeLiner:
+  _timeline_dict = None
+
+  def update_timeline(self, chrome_trace):
+    # convert crome trace to python dict
+    chrome_trace_dict = json.loads(chrome_trace)
+    # for first run store full trace
+    if self._timeline_dict is None:
+      self._timeline_dict = chrome_trace_dict
+    # for other - update only time consumption, not definitions
+    else:
+      for event in chrome_trace_dict['traceEvents']:
+        # events time consumption started with 'ts' prefix
+        if 'ts' in event:
+          self._timeline_dict['traceEvents'].append(event)
+
+  def save(self, f_name):
+    with open(f_name, 'w') as f:
+      json.dump(self._timeline_dict, f)
+
+
+
+
 _DEFAULT_NUM_BATCHES = 100
 
 # TODO(reedwm): add upper_bound and lower_bounds to appropriate integer and
@@ -451,6 +484,8 @@ flags.DEFINE_string('result_storage', None,
                     'in cbuild datastore (note: this option requires special '
                     'permissions and meant to be used from cbuilds).')
 
+# pengwa
+flags.DEFINE_string('mem_opt', 'default', 'memory optimization option')
 
 platforms_util.define_platform_params()
 
@@ -557,10 +592,25 @@ def create_config_proto(params):
   if params.enable_layout_optimizer:
     config.graph_options.rewrite_options.layout_optimizer = (
         rewriter_config_pb2.RewriterConfig.ON)
-  if params.rewriter_config:
-    rewriter_config = rewriter_config_pb2.RewriterConfig()
-    text_format.Merge(params.rewriter_config, rewriter_config)
-    config.graph_options.rewrite_options.CopyFrom(rewriter_config)
+  #if params.rewriter_config:
+  #  rewriter_config = rewriter_config_pb2.RewriterConfig()
+
+  # pengwa
+  if params.mem_opt == 'default':
+    print("default memory optimization")
+    rewriter_config = rewriter_config_pb2.RewriterConfig(memory_optimization=rewriter_config_pb2.RewriterConfig.DEFAULT_MEM_OPT)
+  elif params.mem_opt == 'manual':
+    print("manual memory optimization")
+    rewriter_config = rewriter_config_pb2.RewriterConfig(memory_optimization=rewriter_config_pb2.RewriterConfig.MANUAL)
+  elif params.mem_opt == 'off':
+    print("off memory optimization")
+    rewriter_config = rewriter_config_pb2.RewriterConfig(memory_optimization=rewriter_config_pb2.RewriterConfig.NO_MEM_OPT)
+  elif params.mem_opt == 'intelligent':
+    print("intelligent memory optimization")
+    rewriter_config = rewriter_config_pb2.RewriterConfig(memory_optimization=rewriter_config_pb2.RewriterConfig.SWAPPING_HEURISTICS)
+
+  #text_format.Merge(params.rewriter_config, rewriter_config)
+  config.graph_options.rewrite_options.CopyFrom(rewriter_config)
   if params.variable_update == 'horovod':
     import horovod.tensorflow as hvd  # pylint: disable=g-import-not-at-top
     config.gpu_options.visible_device_list = str(hvd.local_rank())
@@ -601,7 +651,14 @@ def benchmark_one_step(sess,
                        profiler,
                        image_producer,
                        params,
-                       summary_op=None):
+                       many_runs_timeline,
+                       pengwa_profiler,
+                       summary_op=None 
+                       ):
+  # pengwa
+  pengwa_run_metadata = tf.RunMetadata()
+  pengwa_run_options = tf.RunOptions(trace_level = tf.RunOptions.FULL_TRACE)
+
   """Advance one step of benchmarking."""
   should_profile = profiler and 0 <= step < _NUM_STEPS_TO_PROFILE
   need_options_and_metadata = (
@@ -621,10 +678,27 @@ def benchmark_one_step(sess,
   summary_str = None
   start_time = time.time()
   if summary_op is None:
-    results = sess.run(fetches, options=run_options, run_metadata=run_metadata)
+    #results = sess.run(fetches, options=run_options, run_metadata=run_metadata)
+    results = sess.run(fetches, options=pengwa_run_options, run_metadata=pengwa_run_metadata)
   else:
     (results, summary_str) = sess.run(
-        [fetches, summary_op], options=run_options, run_metadata=run_metadata)
+        [fetches, summary_op], options=pengwa_run_options, run_metadata=pengwa_run_metadata)
+        #[fetches, summary_op], options=run_options, run_metadata=run_metadata)
+
+  # pengwa:
+  pengwa_trace = timeline.Timeline(step_stats=pengwa_run_metadata.step_stats)
+  pengwa_chrome_trace = pengwa_trace.generate_chrome_trace_format(show_dataflow=True, show_memory=True)
+  many_runs_timeline.update_timeline(pengwa_chrome_trace)
+  print("training step pengwa:" + str(step))
+  #pengwa_profiler.add_step(step, pengwa_run_metadata) 
+
+  #pengwa_opts = (option_builder.ProfileOptionBuilder(
+  #  option_builder.ProfileOptionBuilder.time_and_memory())
+  #  .with_step(step)
+  #  .with_timeline_output("./timeline_output/step_" + params.mem_opt + str(params.batch_size)).build())
+  #pengwa_profiler.profile_graph(options=pengwa_opts)
+
+
 
   if not params.forward_only:
     lossval = results['average_loss']
@@ -1500,6 +1574,9 @@ class BenchmarkCNN(object):
       if bcast_global_variables_op:
         sess.run(bcast_global_variables_op)
 
+      # pengwa
+      many_runs_timeline = TimeLiner()
+
       image_producer = None
       if image_producer_ops is not None:
         image_producer = cnn_util.ImageProducer(
@@ -1529,7 +1606,8 @@ class BenchmarkCNN(object):
                              filename, as_text)
 
       log_fn('Running warm up')
-      local_step = -1 * self.num_warmup_batches
+      #pengwa: local_step = -1 * self.num_warmup_batches
+      local_step = 0
 
       if (self.single_session or (self.params.cross_replica_sync and
                                   self.params.job_name) or
@@ -1549,6 +1627,30 @@ class BenchmarkCNN(object):
                                                          self.params.debugger)
       profiler = tf.profiler.Profiler() if self.params.tfprof_file else None
       loop_start_time = time.time()
+
+
+      # pengwa
+      #sess.graph.get_operation_by_name('adam_optimizer/gradients/pool1/MaxPool_grad/MaxPoolGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(list=attr_value_pb2.AttrValue.ListValue(i=[0, 1])))
+      # v/tower_0/cg/conv0/Pad 
+      sess.graph.get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/conv0/conv2d/Conv2D_grad/Conv2DBackpropFilter')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=0))
+
+      # v/tower_0/cg/resnet_v10/Relu
+      sess.graph.get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v11/conv5/conv2d/Conv2D_grad/Conv2DBackpropFilter')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=0))
+      sess.graph.get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v10/Relu_grad/ReluGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+
+      # v/tower_0/cg/conv0/Relu 
+      sess.graph.get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/mpool0/MaxPool_grad/MaxPoolGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=0))
+      sess.graph.get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/conv0/Relu_grad/ReluGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+     
+      # v/tower_0/cg/conv0/conv2d/Conv2D
+      sess.graph.get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/conv0/batchnorm0/FusedBatchNorm_grad/FusedBatchNormGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+
+      #sess.graph.get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/conv0/conv2d/Conv2D_grad/Conv2DBackpropFilter')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=0))
+      #
+      pengwa_profiler = model_analyzer.Profiler(sess.graph)
+      # Save GraphDef
+      tf.train.write_graph(sess.graph_def,'.','benchmark.org.pbtxt', as_text=True)
+
       while not done_fn():
         if local_step == 0:
           log_fn('Done warm up')
@@ -1562,7 +1664,7 @@ class BenchmarkCNN(object):
           if self.params.print_training_accuracy or self.params.forward_only:
             header_str += '\ttop_1_accuracy\ttop_5_accuracy'
           log_fn(header_str)
-          assert len(step_train_times) == self.num_warmup_batches
+          #assert len(step_train_times) == self.num_warmup_batches
           # reset times to ignore warm up batch
           step_train_times = []
           loop_start_time = time.time()
@@ -1576,11 +1678,20 @@ class BenchmarkCNN(object):
             self.batch_size * (self.num_workers
                                if self.single_session else 1), step_train_times,
             self.trace_filename, self.params.partitioned_graph_file_prefix,
-            profiler, image_producer, self.params, fetch_summary)
+            profiler, image_producer, self.params, many_runs_timeline, pengwa_profiler, fetch_summary)
         if summary_str is not None and is_chief:
           sv.summary_computed(sess, summary_str)
         local_step += 1
+        # pengwa
+        break
       loop_end_time = time.time()
+
+      # pengwa
+      pengwa_chrome_trace_filename = str(self.params.batch_size) + str(self.params.mem_opt) + "cnn_benchmark"
+      print('Saving pengwa chrome trace  to: %s' % pengwa_chrome_trace_filename)
+      many_runs_timeline.save(pengwa_chrome_trace_filename + '.ctf.json')
+      print('end')
+      return
       # Waits for the global step to be done, regardless of done_fn.
       if global_step_watcher:
         while not global_step_watcher.done():
