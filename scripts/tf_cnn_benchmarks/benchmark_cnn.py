@@ -578,27 +578,29 @@ def create_config_proto(params):
   """
   config = tf.ConfigProto()
   config.allow_soft_placement = True
-  config.intra_op_parallelism_threads = params.num_intra_threads
-  config.inter_op_parallelism_threads = params.num_inter_threads
-  config.gpu_options.force_gpu_compatible = params.force_gpu_compatible
-  if params.allow_growth is not None:
-    config.gpu_options.allow_growth = params.allow_growth
-  if params.gpu_memory_frac_for_testing > 0:
-    config.gpu_options.per_process_gpu_memory_fraction = (
-        params.gpu_memory_frac_for_testing)
-  if params.xla:
-    config.graph_options.optimizer_options.global_jit_level = (
-        tf.OptimizerOptions.ON_1)
-  if params.enable_layout_optimizer:
-    config.graph_options.rewrite_options.layout_optimizer = (
-        rewriter_config_pb2.RewriterConfig.ON)
+  config.log_device_placement = False
+  #config.intra_op_parallelism_threads = params.num_intra_threads
+  #config.inter_op_parallelism_threads = params.num_inter_threads
+  #config.gpu_options.force_gpu_compatible = params.force_gpu_compatible
+  #if params.allow_growth is not None:
+  #  config.gpu_options.allow_growth = params.allow_growth
+  #if params.gpu_memory_frac_for_testing > 0:
+  #  config.gpu_options.per_process_gpu_memory_fraction = (
+  #      params.gpu_memory_frac_for_testing)
+  #if params.xla:
+  #  config.graph_options.optimizer_options.global_jit_level = (
+  #      tf.OptimizerOptions.ON_1)
+  #if params.enable_layout_optimizer:
+  #  config.graph_options.rewrite_options.layout_optimizer = (
+  #      rewriter_config_pb2.RewriterConfig.ON)
   #if params.rewriter_config:
   #  rewriter_config = rewriter_config_pb2.RewriterConfig()
 
   # pengwa
   if params.mem_opt == 'default':
     print("default memory optimization")
-    rewriter_config = rewriter_config_pb2.RewriterConfig(memory_optimization=rewriter_config_pb2.RewriterConfig.DEFAULT_MEM_OPT)
+    return config
+    #rewriter_config = rewriter_config_pb2.RewriterConfig(memory_optimization=rewriter_config_pb2.RewriterConfig.DEFAULT_MEM_OPT)
   elif params.mem_opt == 'manual':
     print("manual memory optimization")
     rewriter_config = rewriter_config_pb2.RewriterConfig(memory_optimization=rewriter_config_pb2.RewriterConfig.MANUAL)
@@ -611,9 +613,9 @@ def create_config_proto(params):
 
   #text_format.Merge(params.rewriter_config, rewriter_config)
   config.graph_options.rewrite_options.CopyFrom(rewriter_config)
-  if params.variable_update == 'horovod':
-    import horovod.tensorflow as hvd  # pylint: disable=g-import-not-at-top
-    config.gpu_options.visible_device_list = str(hvd.local_rank())
+  #if params.variable_update == 'horovod':
+  #  import horovod.tensorflow as hvd  # pylint: disable=g-import-not-at-top
+  #  config.gpu_options.visible_device_list = str(hvd.local_rank())
 
   return config
 
@@ -629,11 +631,11 @@ def get_mode_from_params(params):
   """
   if params.forward_only and params.eval:
     raise ValueError('Only one of forward_only and eval parameters is true')
-
-  if params.eval:
-    return 'evaluation'
-  if params.forward_only:
-    return 'forward-only'
+  # pengwa: only leave training mode
+  #if params.eval:
+  #  return 'evaluation'
+  #if params.forward_only:
+  #  return 'forward-only'
   return 'training'
 
 
@@ -656,33 +658,36 @@ def benchmark_one_step(sess,
                        summary_op=None 
                        ):
   # pengwa
+  # Save GraphDef
+  print("print graph on the python client side.")
+  tf.train.write_graph(sess.graph_def,'.','benchmark.org.pbtxt', as_text=True)
   pengwa_run_metadata = tf.RunMetadata()
   pengwa_run_options = tf.RunOptions(trace_level = tf.RunOptions.FULL_TRACE)
 
   """Advance one step of benchmarking."""
-  should_profile = profiler and 0 <= step < _NUM_STEPS_TO_PROFILE
-  need_options_and_metadata = (
-      should_profile or
-      ((trace_filename or partitioned_graph_file_prefix) and step == -1)
-  )
-  if need_options_and_metadata:
-    run_options = tf.RunOptions()
-    if (trace_filename and step == -1) or should_profile:
-      run_options.trace_level = tf.RunOptions.FULL_TRACE
-    if partitioned_graph_file_prefix and step == -1:
-      run_options.output_partition_graphs = True
-    run_metadata = tf.RunMetadata()
-  else:
-    run_options = None
-    run_metadata = None
+  #should_profile = profiler and 0 <= step < _NUM_STEPS_TO_PROFILE
+  #need_options_and_metadata = (
+  #    should_profile or
+  #    ((trace_filename or partitioned_graph_file_prefix) and step == -1)
+  #)
+  #if need_options_and_metadata:
+  #  run_options = tf.RunOptions()
+  #  if (trace_filename and step == -1) or should_profile:
+  #    run_options.trace_level = tf.RunOptions.FULL_TRACE
+  #  if partitioned_graph_file_prefix and step == -1:
+  #    run_options.output_partition_graphs = True
+  #  run_metadata = tf.RunMetadata()
+  #else:
+  #  run_options = None
+  #  run_metadata = None
   summary_str = None
-  start_time = time.time()
+  #start_time = time.time()
   if summary_op is None:
     #results = sess.run(fetches, options=run_options, run_metadata=run_metadata)
-    results = sess.run(fetches, options=pengwa_run_options, run_metadata=pengwa_run_metadata)
+    results = sess.run(fetches, options=pengwa_run_options, run_metadata=pengwa_run_metadata) # pengwa
   else:
     (results, summary_str) = sess.run(
-        [fetches, summary_op], options=pengwa_run_options, run_metadata=pengwa_run_metadata)
+        [fetches, summary_op], options=pengwa_run_options, run_metadata=pengwa_run_metadata) # pengwa
         #[fetches, summary_op], options=run_options, run_metadata=run_metadata)
 
   # pengwa:
@@ -700,52 +705,53 @@ def benchmark_one_step(sess,
 
 
 
-  if not params.forward_only:
-    lossval = results['average_loss']
-  else:
-    lossval = 0.
-  if image_producer is not None:
-    image_producer.notify_image_consumption()
-  train_time = time.time() - start_time
-  step_train_times.append(train_time)
-  if step >= 0 and (step == 0 or (step + 1) % params.display_every == 0):
-    log_str = '%i\t%s\t%.*f' % (
-        step + 1, get_perf_timing_str(batch_size, step_train_times),
-        LOSS_AND_ACCURACY_DIGITS_TO_SHOW, lossval)
-    if 'top_1_accuracy' in results:
-      log_str += '\t%.*f\t%.*f' % (
-          LOSS_AND_ACCURACY_DIGITS_TO_SHOW, results['top_1_accuracy'],
-          LOSS_AND_ACCURACY_DIGITS_TO_SHOW, results['top_5_accuracy'])
-    log_fn(log_str)
-  if need_options_and_metadata:
-    if should_profile:
-      profiler.add_step(step, run_metadata)
-    if trace_filename and step == -1:
-      log_fn('Dumping trace to %s' % trace_filename)
-      trace_dir = os.path.dirname(trace_filename)
-      if not gfile.Exists(trace_dir):
-        gfile.MakeDirs(trace_dir)
-      with gfile.Open(trace_filename, 'w') as trace_file:
-        if params.use_chrome_trace_format:
-          trace = timeline.Timeline(step_stats=run_metadata.step_stats)
-          trace_file.write(trace.generate_chrome_trace_format(show_memory=True))
-        else:
-          trace_file.write(str(run_metadata.step_stats))
-    if partitioned_graph_file_prefix and step == -1:
-      path, filename = os.path.split(partitioned_graph_file_prefix)
-      if '.' in filename:
-        base_filename, ext = filename.rsplit('.', 1)
-        ext = '.' + ext
-      else:
-        base_filename, ext = filename, ''
-      as_text = filename.endswith('txt')
-      for graph_def in run_metadata.partition_graphs:
-        device = graph_def.node[0].device.replace('/', '_').replace(':', '_')
-        graph_filename = '%s%s%s' % (base_filename, device, ext)
-        log_fn('Writing partitioned GraphDef as %s to %s' % (
-            'text' if as_text else 'binary',
-            os.path.join(path, graph_filename)))
-        tf.train.write_graph(graph_def, path, graph_filename, as_text)
+  #if not params.forward_only:
+  #  lossval = results['average_loss']
+  lossval = results['average_loss'] # pengwa
+  #else:
+  #  lossval = 0.
+  #if image_producer is not None:
+  #  image_producer.notify_image_consumption()
+  #train_time = time.time() - start_time
+  #step_train_times.append(train_time)
+  #if step >= 0 and (step == 0 or (step + 1) % params.display_every == 0):
+  #  log_str = '%i\t%s\t%.*f' % (
+  #      step + 1, get_perf_timing_str(batch_size, step_train_times),
+  #      LOSS_AND_ACCURACY_DIGITS_TO_SHOW, lossval)
+  #  if 'top_1_accuracy' in results:
+  #    log_str += '\t%.*f\t%.*f' % (
+  #        LOSS_AND_ACCURACY_DIGITS_TO_SHOW, results['top_1_accuracy'],
+  #        LOSS_AND_ACCURACY_DIGITS_TO_SHOW, results['top_5_accuracy'])
+  #  log_fn(log_str)
+  #if need_options_and_metadata:
+  #  if should_profile:
+  #    profiler.add_step(step, run_metadata)
+  #  if trace_filename and step == -1:
+  #    log_fn('Dumping trace to %s' % trace_filename)
+  #    trace_dir = os.path.dirname(trace_filename)
+  #    if not gfile.Exists(trace_dir):
+  #      gfile.MakeDirs(trace_dir)
+  #    with gfile.Open(trace_filename, 'w') as trace_file:
+  #      if params.use_chrome_trace_format:
+  #        trace = timeline.Timeline(step_stats=run_metadata.step_stats)
+  #        trace_file.write(trace.generate_chrome_trace_format(show_memory=True))
+  #      else:
+  #       trace_file.write(str(run_metadata.step_stats))
+  #  if partitioned_graph_file_prefix and step == -1:
+  #    path, filename = os.path.split(partitioned_graph_file_prefix)
+  #    if '.' in filename:
+  #      base_filename, ext = filename.rsplit('.', 1)
+  #      ext = '.' + ext
+  #    else:
+  #      base_filename, ext = filename, ''
+  #    as_text = filename.endswith('txt')
+  #    for graph_def in run_metadata.partition_graphs:
+  #      device = graph_def.node[0].device.replace('/', '_').replace(':', '_')
+  #      graph_filename = '%s%s%s' % (base_filename, device, ext)
+  #      log_fn('Writing partitioned GraphDef as %s to %s' % (
+  #          'text' if as_text else 'binary',
+  #          os.path.join(path, graph_filename)))
+  #      tf.train.write_graph(graph_def, path, graph_filename, as_text)
   return summary_str
 
 
@@ -1377,69 +1383,70 @@ class BenchmarkCNN(object):
       time.sleep(self.params.eval_interval_secs)
     return {}
 
-  def _eval_once(self, saver, summary_writer, target, local_var_init_op_group,
-                 image_producer_ops, enqueue_ops, fetches, summary_op):
-    """Evaluate the model from a checkpoint using validation dataset."""
-    with tf.Session(
-        target=target, config=create_config_proto(self.params)) as sess:
-      if self.params.train_dir is None:
-        raise ValueError('Trained model directory not specified')
-      try:
-        global_step = load_checkpoint(saver, sess, self.params.train_dir)
-      except CheckpointNotFoundException:
-        log_fn('Checkpoint not found in %s' % self.params.train_dir)
-        return
-      sess.run(local_var_init_op_group)
-      if self.dataset.queue_runner_required():
-        tf.train.start_queue_runners(sess=sess)
-      image_producer = None
-      if image_producer_ops is not None:
-        image_producer = cnn_util.ImageProducer(
-            sess, image_producer_ops, self.batch_group_size,
-            self.params.use_python32_barrier)
-        image_producer.start()
-        for i in xrange(len(enqueue_ops)):
-          sess.run(enqueue_ops[:(i + 1)])
-          image_producer.notify_image_consumption()
-      loop_start_time = start_time = time.time()
-      top_1_accuracy_sum = 0.0
-      top_5_accuracy_sum = 0.0
-      total_eval_count = self.num_batches * self.batch_size
-      for step in xrange(self.num_batches):
-        if (self.params.save_summaries_steps > 0 and
-            (step + 1) % self.params.save_summaries_steps == 0):
-          results, summary_str = sess.run([fetches, summary_op])
-          summary_writer.add_summary(summary_str)
-        else:
-          results = sess.run(fetches)
-        top_1_accuracy_sum += results['top_1_accuracy']
-        top_5_accuracy_sum += results['top_5_accuracy']
-        if (step + 1) % self.params.display_every == 0:
-          duration = time.time() - start_time
-          examples_per_sec = (
-              self.batch_size * self.params.display_every / duration)
-          log_fn('%i\t%.1f examples/sec' % (step + 1, examples_per_sec))
-          start_time = time.time()
-        if image_producer is not None:
-          image_producer.notify_image_consumption()
-      loop_end_time = time.time()
-      if image_producer is not None:
-        image_producer.done()
-      accuracy_at_1 = top_1_accuracy_sum / self.num_batches
-      accuracy_at_5 = top_5_accuracy_sum / self.num_batches
-      summary = tf.Summary()
-      summary.value.add(tag='eval/Accuracy@1', simple_value=accuracy_at_1)
-      summary.value.add(tag='eval/Accuracy@5', simple_value=accuracy_at_5)
-      summary_writer.add_summary(summary, global_step)
-      log_fn('Accuracy @ 1 = %.4f Accuracy @ 5 = %.4f [%d examples]' %
-             (accuracy_at_1, accuracy_at_5, total_eval_count))
-      elapsed_time = loop_end_time - loop_start_time
-      images_per_sec = (self.num_batches * self.batch_size / elapsed_time)
+  # pengwa: disable the _eval_once by intention
+  #def _eval_once(self, saver, summary_writer, target, local_var_init_op_group,
+  #               image_producer_ops, enqueue_ops, fetches, summary_op):
+  #  """Evaluate the model from a checkpoint using validation dataset."""
+  #  with tf.Session(
+  #     target=target, config=create_config_proto(self.params)) as sess:
+  #    if self.params.train_dir is None:
+  #      raise ValueError('Trained model directory not specified')
+  #    try:
+  #      global_step = load_checkpoint(saver, sess, self.params.train_dir)
+  #    except CheckpointNotFoundException:
+  #      log_fn('Checkpoint not found in %s' % self.params.train_dir)
+  #      return
+  #    sess.run(local_var_init_op_group)
+  #    if self.dataset.queue_runner_required():
+  #      tf.train.start_queue_runners(sess=sess)
+  #    image_producer = None
+  #    if image_producer_ops is not None:
+  #      image_producer = cnn_util.ImageProducer(
+  #          sess, image_producer_ops, self.batch_group_size,
+  #          self.params.use_python32_barrier)
+  #      image_producer.start()
+  #      for i in xrange(len(enqueue_ops)):
+  #        sess.run(enqueue_ops[:(i + 1)])
+  #        image_producer.notify_image_consumption()
+  #    loop_start_time = start_time = time.time()
+  #    top_1_accuracy_sum = 0.0
+  #    top_5_accuracy_sum = 0.0
+  #    total_eval_count = self.num_batches * self.batch_size
+  #    for step in xrange(self.num_batches):
+  #      if (self.params.save_summaries_steps > 0 and
+  #          (step + 1) % self.params.save_summaries_steps == 0):
+  #        results, summary_str = sess.run([fetches, summary_op])
+  #        summary_writer.add_summary(summary_str)
+  #      else:
+  #        results = sess.run(fetches)
+  #      top_1_accuracy_sum += results['top_1_accuracy']
+  #      top_5_accuracy_sum += results['top_5_accuracy']
+  #      if (step + 1) % self.params.display_every == 0:
+  #        duration = time.time() - start_time
+  #        examples_per_sec = (
+  #            self.batch_size * self.params.display_every / duration)
+  #        log_fn('%i\t%.1f examples/sec' % (step + 1, examples_per_sec))
+  #        start_time = time.time()
+  #      if image_producer is not None:
+  #        image_producer.notify_image_consumption()
+  #    loop_end_time = time.time()
+  #    if image_producer is not None:
+  #      image_producer.done()
+  #    accuracy_at_1 = top_1_accuracy_sum / self.num_batches
+  #    accuracy_at_5 = top_5_accuracy_sum / self.num_batches
+  #    summary = tf.Summary()
+  #    summary.value.add(tag='eval/Accuracy@1', simple_value=accuracy_at_1)
+  #    summary.value.add(tag='eval/Accuracy@5', simple_value=accuracy_at_5)
+  #    summary_writer.add_summary(summary, global_step)
+  #    log_fn('Accuracy @ 1 = %.4f Accuracy @ 5 = %.4f [%d examples]' %
+  #           (accuracy_at_1, accuracy_at_5, total_eval_count))
+  #    elapsed_time = loop_end_time - loop_start_time
+  #    images_per_sec = (self.num_batches * self.batch_size / elapsed_time)
       # Note that we compute the top 1 accuracy and top 5 accuracy for each
       # batch, which will have a slight performance impact.
-      log_fn('-' * 64)
-      log_fn('total images/sec: %.2f' % images_per_sec)
-      log_fn('-' * 64)
+  #    log_fn('-' * 64)
+  #    log_fn('total images/sec: %.2f' % images_per_sec)
+  #    log_fn('-' * 64)
 
   def _benchmark_cnn(self):
     """Run cnn in benchmark mode. Skip the backward pass if forward_only is on.
@@ -1448,39 +1455,42 @@ class BenchmarkCNN(object):
       Dictionary containing training statistics (num_workers, num_steps,
       average_wall_time, images_per_sec).
     """
-    if self.params.variable_update == 'distributed_all_reduce':
-      self.single_session = True
-      if self.params.datasets_use_prefetch:
-        (image_producer_ops, enqueue_ops, fetches) = (
-            self._build_model_single_session_with_dataset_prefetching())
-      else:
-        (image_producer_ops, enqueue_ops, fetches) = (
-            self._build_model_single_session())
-    else:
-      self.single_session = False
-      if self.params.datasets_use_prefetch:
-        (image_producer_ops, enqueue_ops, fetches) = (
-            self._build_model_with_dataset_prefetching())
-      else:
-        (image_producer_ops, enqueue_ops, fetches) = self._build_model()
+    #if self.params.variable_update == 'distributed_all_reduce':
+    #  self.single_session = True
+    #  if self.params.datasets_use_prefetch:
+    #    (image_producer_ops, enqueue_ops, fetches) = (
+    #        self._build_model_single_session_with_dataset_prefetching())
+    #  else:
+    #    (image_producer_ops, enqueue_ops, fetches) = (
+    #        self._build_model_single_session())
+    #else:
+    #  self.single_session = False
+    #  if self.params.datasets_use_prefetch:
+    #    (image_producer_ops, enqueue_ops, fetches) = (
+    #        self._build_model_with_dataset_prefetching())
+    #  else:
+    #    (image_producer_ops, enqueue_ops, fetches) = self._build_model()
+    self.single_session = False  # pengwa
+    (image_producer_ops, enqueue_ops, fetches) = self._build_model() # pengwa
+    
     fetches_list = nest.flatten(list(fetches.values()))
     main_fetch_group = tf.group(*fetches_list)
     execution_barrier = None
-    if (not self.single_session and self.job_name and
-        not self.params.cross_replica_sync):
-      execution_barrier = self.add_sync_queues_and_barrier(
-          'execution_barrier_', [])
+    #if (not self.single_session and self.job_name and
+    #    not self.params.cross_replica_sync):
+    #  execution_barrier = self.add_sync_queues_and_barrier(
+    #      'execution_barrier_', [])
 
     global_step = tf.train.get_global_step()
     with tf.device(self.global_step_device):
       with tf.control_dependencies([main_fetch_group]):
         fetches['inc_global_step'] = global_step.assign_add(1)
 
-    if ((not self.single_session) and self.job_name and
-        self.params.cross_replica_sync):
+    #if ((not self.single_session) and self.job_name and
+    #    self.params.cross_replica_sync):
       # Block all replicas until all replicas are ready for next step.
-      fetches['sync_queues'] = self.add_sync_queues_and_barrier(
-          'sync_queues_step_end_', [main_fetch_group])
+    #  fetches['sync_queues'] = self.add_sync_queues_and_barrier(
+    #      'sync_queues_step_end_', [main_fetch_group])
 
     local_var_init_op = tf.local_variables_initializer()
     table_init_ops = tf.tables_initializer()
@@ -1489,22 +1499,23 @@ class BenchmarkCNN(object):
       variable_mgr_init_ops.extend([table_init_ops])
     with tf.control_dependencies([local_var_init_op]):
       variable_mgr_init_ops.extend(self.variable_mgr.get_post_init_ops())
-    if (not self.single_session and self.job_name and
-        self.params.cross_replica_sync):
+    #if (not self.single_session and self.job_name and
+    #    self.params.cross_replica_sync):
       # Ensure all workers execute variable_mgr_init_ops before they start
       # executing the model.
-      variable_mgr_init_ops.append(
-          self.add_sync_queues_and_barrier('init_ops_end_',
-                                           variable_mgr_init_ops))
+    #  variable_mgr_init_ops.append(
+    #      self.add_sync_queues_and_barrier('init_ops_end_',
+    #                                       variable_mgr_init_ops))
     local_var_init_op_group = tf.group(*variable_mgr_init_ops)
 
-    if self.params.variable_update == 'horovod':
-      import horovod.tensorflow as hvd  # pylint: disable=g-import-not-at-top
+    #if self.params.variable_update == 'horovod':
+    #  import horovod.tensorflow as hvd  # pylint: disable=g-import-not-at-top
       # First worker will be 'chief' - it will write summaries and
       # save checkpoints.
-      is_chief = hvd.rank() == 0
-    else:
-      is_chief = (not self.job_name or self.task_index == 0)
+    #  is_chief = hvd.rank() == 0
+    #else:
+    #  is_chief = (not self.job_name or self.task_index == 0)
+    is_chief = (not self.job_name or self.task_index == 0)
 
     summary_op = tf.summary.merge_all()
     summary_writer = None
@@ -1532,20 +1543,114 @@ class BenchmarkCNN(object):
     saver = tf.train.Saver(
         self.variable_mgr.savable_variables(), save_relative_paths=True)
     ready_for_local_init_op = None
-    if self.job_name and not self.single_session:
+    #if self.job_name and not self.single_session:
       # In distributed mode, we don't want to run local_var_init_op_group until
       # the global variables are initialized, because local_var_init_op_group
       # may use global variables (such as in distributed replicated mode). We
       # don't set this in non-distributed mode, because in non-distributed mode,
       # local_var_init_op_group may itself initialize global variables (such as
       # in replicated mode).
-      ready_for_local_init_op = tf.report_uninitialized_variables(
-          tf.global_variables())
-    if self.params.variable_update == 'horovod':
-      import horovod.tensorflow as hvd  # pylint: disable=g-import-not-at-top
-      bcast_global_variables_op = hvd.broadcast_global_variables(0)
-    else:
-      bcast_global_variables_op = None
+    #  ready_for_local_init_op = tf.report_uninitialized_variables(
+    #      tf.global_variables())
+    #if self.params.variable_update == 'horovod':
+    #  import horovod.tensorflow as hvd  # pylint: disable=g-import-not-at-top
+    #  bcast_global_variables_op = hvd.broadcast_global_variables(0)
+    #else:
+    #  bcast_global_variables_op = None
+    bcast_global_variables_op = None # pengwa
+
+    # pengwa
+    #sess.graph.get_operation_by_name('adam_optimizer/gradients/pool1/MaxPool_grad/MaxPoolGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(list=attr_value_pb2.AttrValue.ListValue(i=[0, 1])))
+    # v/tower_0/cg/conv0/Pad 
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/conv0/conv2d/Conv2D_grad/Conv2DBackpropFilter')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=0))
+
+
+    # v/tower_0/cg/conv0/Relu 
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/mpool0/MaxPool_grad/MaxPoolGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=0))
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/conv0/Relu_grad/ReluGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+   
+    # v/tower_0/cg/conv0/conv2d/Conv2D
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/conv0/batchnorm0/FusedBatchNorm_grad/FusedBatchNormGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+
+    # v/tower_0/cg/mpool0/MaxPool 64M
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/mpool0/MaxPool_grad/MaxPoolGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v10/conv2/conv2d/Conv2D_grad/Conv2DBackpropFilter')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=0))
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v10/conv1/conv2d/Conv2D_grad/Conv2DBackpropFilter')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=0))
+    
+    # v/tower_0/cg/resnet_v10/conv1/conv2d/Conv2D 256M
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v10/conv1/batchnorm1/FusedBatchNorm_grad/FusedBatchNormGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+    
+    # v/tower_0/cg/resnet_v10/conv2/conv2d/Conv2D 64M
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v10/conv2/batchnorm2/FusedBatchNorm_grad/FusedBatchNormGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+ 
+    # v/tower_0/cg/resnet_v10/conv2/Relu 64M
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v10/conv2/Relu_grad/ReluGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v10/conv3/conv2d/Conv2D_grad/Conv2DBackpropFilter')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=0))
+
+    # v/tower_0/cg/resnet_v10/conv3/conv2d/Conv2D 64M
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v10/conv3/batchnorm3/FusedBatchNorm_grad/FusedBatchNormGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+
+    # v/tower_0/cg/resnet_v10/conv3/Relu 64M
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v10/conv4/conv2d/Conv2D_grad/Conv2DBackpropFilter')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=0))
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v10/conv3/Relu_grad/ReluGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+
+    # v/tower_0/cg/resnet_v10/conv4/conv2d/Conv2D 256M
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v10/conv4/batchnorm4/FusedBatchNorm_grad/FusedBatchNormGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+     
+    # v/tower_0/cg/resnet_v10/Relu 256M
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v11/conv5/conv2d/Conv2D_grad/Conv2DBackpropFilter')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=0))
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v10/Relu_grad/ReluGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+
+    # v/tower_0/cg/resnet_v11/conv5/conv2d/Conv2D 64M
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v11/conv5/batchnorm5/FusedBatchNorm_grad/FusedBatchNormGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+
+    # v/tower_0/cg/resnet_v11/conv5/Relu 64M
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v11/conv5/Relu_grad/ReluGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v11/conv6/conv2d/Conv2D_grad/Conv2DBackpropFilter')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=0))
+
+    # v/tower_0/cg/resnet_v11/conv6/conv2d/Conv2D 64M
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v11/conv6/batchnorm6/FusedBatchNorm_grad/FusedBatchNormGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+
+    # v/tower_0/cg/resnet_v11/conv6/Relu 64M
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v11/conv6/Relu_grad/ReluGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v11/conv7/conv2d/Conv2D_grad/Conv2DBackpropFilter')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=0))
+
+    # v/tower_0/cg/resnet_v11/conv7/conv2d/Conv2D 256M
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v11/conv7/batchnorm7/FusedBatchNorm_grad/FusedBatchNormGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+   
+    # v/tower_0/cg/resnet_v11/Relu 256M
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v12/conv8/conv2d/Conv2D_grad/Conv2DBackpropFilter')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=0))
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v11/Relu_grad/ReluGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+    
+    # v/tower_0/cg/resnet_v12/conv8/conv2d/Conv2D 64M
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v12/conv8/batchnorm8/FusedBatchNorm_grad/FusedBatchNormGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+
+    # v/tower_0/cg/resnet_v12/conv8/Relu 64M
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v12/conv9/conv2d/Conv2D_grad/Conv2DBackpropFilter')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=0))
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v12/conv8/Relu_grad/ReluGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+
+    # v/tower_0/cg/resnet_v12/conv9/conv2d/Conv2D 64M
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v12/conv9/batchnorm9/FusedBatchNorm_grad/FusedBatchNormGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+
+    # v/tower_0/cg/resnet_v12/conv9/Relu 64M
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v12/conv10/conv2d/Conv2D_grad/Conv2DBackpropFilter')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=0))
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v12/conv9/Relu_grad/ReluGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+
+    # v/tower_0/cg/resnet_v12/conv10/conv2d/Conv2D 256M
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v12/conv10/batchnorm10/FusedBatchNorm_grad/FusedBatchNormGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+    
+    # v/tower_0/cg/resnet_v12/Relu 256M
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v13/conv11/conv2d/Conv2D_grad/Conv2DBackpropFilter')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=0))
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v13/conv12/conv2d/Conv2D_grad/Conv2DBackpropFilter')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=0))
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v12/Relu_grad/ReluGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+
+    # v/tower_0/cg/resnet_v13/conv11/conv2d/Conv2D 128M
+    tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v13/conv11/batchnorm11/FusedBatchNorm_grad/FusedBatchNormGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
+   
+
+
+    #tf.get_default_graph().get_operation_by_name('')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=0))
+    #tf.get_default_graph().get_operation_by_name('')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
     sv = tf.train.Supervisor(
         # For the purpose of Supervisor, all Horovod workers are 'chiefs',
         # since we want session to be initialized symmetrically on all the
@@ -1571,11 +1676,15 @@ class BenchmarkCNN(object):
         master=target,
         config=create_config_proto(self.params),
         start_standard_services=start_standard_services) as sess:
+
+
+
       if bcast_global_variables_op:
         sess.run(bcast_global_variables_op)
 
       # pengwa
       many_runs_timeline = TimeLiner()
+      file_writer = tf.summary.FileWriter('./tfboard', sess.graph)
 
       image_producer = None
       if image_producer_ops is not None:
@@ -1585,85 +1694,74 @@ class BenchmarkCNN(object):
         image_producer.start()
         for i in xrange(len(enqueue_ops)):
           sess.run(enqueue_ops[:(i + 1)])
+          print("pengwa_verify_2")
           image_producer.notify_image_consumption()
       self.init_global_step, = sess.run([global_step])
-      if not self.single_session and self.params.variable_update != 'horovod':
-        global_step_watcher = GlobalStepWatcher(
-            sess, global_step,
-            self.num_workers * self.num_warmup_batches +
-            self.init_global_step,
-            self.num_workers * (self.num_warmup_batches + self.num_batches) - 1)
-        global_step_watcher.start()
-      else:
-        global_step_watcher = None
+      print("pengwa_verify_3")
+      #if not self.single_session and self.params.variable_update != 'horovod':
+      #  global_step_watcher = GlobalStepWatcher(
+      #      sess, global_step,
+      #      self.num_workers * self.num_warmup_batches +
+      #      self.init_global_step,
+      #      self.num_workers * (self.num_warmup_batches + self.num_batches) - 1)
+      #  global_step_watcher.start()
+      #else:
+      #  global_step_watcher = None
+      global_step_watcher = None # pengwa
 
-      if self.graph_file is not None:
-        path, filename = os.path.split(self.graph_file)
-        as_text = filename.endswith('txt')
-        log_fn('Writing GraphDef as %s to %s' % (  # pyformat break
-            'text' if as_text else 'binary', self.graph_file))
-        tf.train.write_graph(sess.graph.as_graph_def(add_shapes=True), path,
-                             filename, as_text)
+      #if self.graph_file is not None:
+      #  path, filename = os.path.split(self.graph_file)
+      #  as_text = filename.endswith('txt')
+      #  log_fn('Writing GraphDef as %s to %s' % (  # pyformat break
+      #      'text' if as_text else 'binary', self.graph_file))
+      #  tf.train.write_graph(sess.graph.as_graph_def(add_shapes=True), path,
+      #                       filename, as_text)
 
       log_fn('Running warm up')
       #pengwa: local_step = -1 * self.num_warmup_batches
       local_step = 0
 
-      if (self.single_session or (self.params.cross_replica_sync and
-                                  self.params.job_name) or
-          self.params.variable_update == 'horovod'):
+      #if (self.single_session or (self.params.cross_replica_sync and
+      #                            self.params.job_name) or
+      #    self.params.variable_update == 'horovod'):
         # In cross-replica sync mode, all workers must run the same number of
         # local steps, or else the workers running the extra step will block.
-        done_fn = lambda: local_step == self.num_batches
-      else:
-        done_fn = global_step_watcher.done
-      if self.params.debugger is not None:
-        if self.params.debugger == 'cli':
-          log_fn('The CLI TensorFlow debugger will be used.')
-          sess = tf_debug.LocalCLIDebugWrapperSession(sess)
-        else:
-          log_fn('The TensorBoard debugger plugin will be used.')
-          sess = tf_debug.TensorBoardDebugWrapperSession(sess,
-                                                         self.params.debugger)
-      profiler = tf.profiler.Profiler() if self.params.tfprof_file else None
+      #  done_fn = lambda: local_step == self.num_batches
+      #else:
+      #  done_fn = global_step_watcher.done
+      #if self.params.debugger is not None:
+      #  if self.params.debugger == 'cli':
+      #    log_fn('The CLI TensorFlow debugger will be used.')
+      #    sess = tf_debug.LocalCLIDebugWrapperSession(sess)
+      #  else:
+      #    log_fn('The TensorBoard debugger plugin will be used.')
+      #    sess = tf_debug.TensorBoardDebugWrapperSession(sess,
+      #                                                   self.params.debugger)
+      #profiler = tf.profiler.Profiler() if self.params.tfprof_file else None
       loop_start_time = time.time()
 
 
-      # pengwa
-      #sess.graph.get_operation_by_name('adam_optimizer/gradients/pool1/MaxPool_grad/MaxPoolGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(list=attr_value_pb2.AttrValue.ListValue(i=[0, 1])))
-      # v/tower_0/cg/conv0/Pad 
-      sess.graph.get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/conv0/conv2d/Conv2D_grad/Conv2DBackpropFilter')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=0))
-
-      # v/tower_0/cg/resnet_v10/Relu
-      sess.graph.get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v11/conv5/conv2d/Conv2D_grad/Conv2DBackpropFilter')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=0))
-      sess.graph.get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v10/Relu_grad/ReluGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
-
-      # v/tower_0/cg/conv0/Relu 
-      sess.graph.get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/mpool0/MaxPool_grad/MaxPoolGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=0))
-      sess.graph.get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/conv0/Relu_grad/ReluGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
-     
-      # v/tower_0/cg/conv0/conv2d/Conv2D
-      sess.graph.get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/conv0/batchnorm0/FusedBatchNorm_grad/FusedBatchNormGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
-
-      #sess.graph.get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/conv0/conv2d/Conv2D_grad/Conv2DBackpropFilter')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=0))
-      #
+      # pengwa: profiler
       pengwa_profiler = model_analyzer.Profiler(sess.graph)
-      # Save GraphDef
-      tf.train.write_graph(sess.graph_def,'.','benchmark.org.pbtxt', as_text=True)
+      
 
-      while not done_fn():
+
+      #while not done_fn():
+      while True: # pengwa
         if local_step == 0:
-          log_fn('Done warm up')
-          if execution_barrier:
-            log_fn('Waiting for other replicas to finish warm up')
-            assert global_step_watcher.start_time == 0
-            sess.run([execution_barrier])
+          #log_fn('Done warm up')
+          #if execution_barrier:
+          #  log_fn('Waiting for other replicas to finish warm up')
+          #  assert global_step_watcher.start_time == 0
+          #  sess.run([execution_barrier])
+          #  print("pengwa_verify_4")
+          #  tf.train.write_graph(sess.graph.as_graph_def(add_shapes=True), "./", "pengwa_verify_4.pbtxt", True)
 
-          header_str = ('Step\tImg/sec\t' +
-                        self.params.loss_type_to_report.replace('/', ' '))
-          if self.params.print_training_accuracy or self.params.forward_only:
-            header_str += '\ttop_1_accuracy\ttop_5_accuracy'
-          log_fn(header_str)
+          #header_str = ('Step\tImg/sec\t' +
+          #              self.params.loss_type_to_report.replace('/', ' '))
+          #if self.params.print_training_accuracy or self.params.forward_only:
+          #  header_str += '\ttop_1_accuracy\ttop_5_accuracy'
+          #log_fn(header_str)
           #assert len(step_train_times) == self.num_warmup_batches
           # reset times to ignore warm up batch
           step_train_times = []
@@ -1678,7 +1776,11 @@ class BenchmarkCNN(object):
             self.batch_size * (self.num_workers
                                if self.single_session else 1), step_train_times,
             self.trace_filename, self.params.partitioned_graph_file_prefix,
-            profiler, image_producer, self.params, many_runs_timeline, pengwa_profiler, fetch_summary)
+        #    profiler, image_producer, self.params, 
+            None, image_producer, self.params,  # pengwa
+            many_runs_timeline, pengwa_profiler, # pengwa
+            fetch_summary)
+        print("pengwa_verify_5")
         if summary_str is not None and is_chief:
           sv.summary_computed(sess, summary_str)
         local_step += 1
@@ -1691,17 +1793,18 @@ class BenchmarkCNN(object):
       print('Saving pengwa chrome trace  to: %s' % pengwa_chrome_trace_filename)
       many_runs_timeline.save(pengwa_chrome_trace_filename + '.ctf.json')
       print('end')
+
       return
       # Waits for the global step to be done, regardless of done_fn.
       if global_step_watcher:
         while not global_step_watcher.done():
           time.sleep(.25)
-      if self.single_session or self.params.variable_update == 'horovod':
-        elapsed_time = loop_end_time - loop_start_time
-        average_wall_time = elapsed_time / local_step if local_step > 0 else 0
-        images_per_sec = (self.num_workers * local_step * self.batch_size /
-                          elapsed_time)
-        num_steps = local_step * self.num_workers
+      #if self.single_session or self.params.variable_update == 'horovod':
+      #  elapsed_time = loop_end_time - loop_start_time
+      #  average_wall_time = elapsed_time / local_step if local_step > 0 else 0
+      #  images_per_sec = (self.num_workers * local_step * self.batch_size /
+      #                    elapsed_time)
+       # num_steps = local_step * self.num_workers
       else:
         # NOTE: Each worker independently increases the global step. So,
         # num_steps will be the sum of the local_steps from each worker.
