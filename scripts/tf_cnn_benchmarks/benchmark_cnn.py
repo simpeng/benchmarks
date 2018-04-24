@@ -486,6 +486,12 @@ flags.DEFINE_string('result_storage', None,
 
 # pengwa
 flags.DEFINE_string('mem_opt', 'default', 'memory optimization option')
+flags.DEFINE_integer('tensor_size', 1024, 'bytes')
+flags.DEFINE_integer('tensor_duration', 1000000, 'ns')
+flags.DEFINE_boolean('extreme', False, 'do not consider too much on performance degragation')
+flags.DEFINE_boolean('use_simpler_strategy', False, 'simpler strategy when choosing the swapping node')
+flags.DEFINE_integer('elastic_percentage', 100, '%')
+flags.DEFINE_integer('to_reserve', 0, '')
 
 platforms_util.define_platform_params()
 
@@ -595,7 +601,8 @@ def create_config_proto(params):
   #      rewriter_config_pb2.RewriterConfig.ON)
   #if params.rewriter_config:
   #  rewriter_config = rewriter_config_pb2.RewriterConfig()
-
+  
+  print("elastic percentage (only applicable for mem opt is enabled): " + str(params.elastic_percentage) + "%, reserve flag:" + str(params.to_reserve))
   # pengwa
   if params.mem_opt == 'default':
     print("default memory optimization")
@@ -603,13 +610,31 @@ def create_config_proto(params):
     #rewriter_config = rewriter_config_pb2.RewriterConfig(memory_optimization=rewriter_config_pb2.RewriterConfig.DEFAULT_MEM_OPT)
   elif params.mem_opt == 'manual':
     print("manual memory optimization")
-    rewriter_config = rewriter_config_pb2.RewriterConfig(memory_optimization=rewriter_config_pb2.RewriterConfig.MANUAL)
+    rewriter_config = rewriter_config_pb2.RewriterConfig(memory_optimization=rewriter_config_pb2.RewriterConfig.MANUAL, 
+      mem_opt_elastic_percentage=params.elastic_percentage,
+      mem_opt_reserve=params.to_reserve
+    )
   elif params.mem_opt == 'off':
     print("off memory optimization")
     rewriter_config = rewriter_config_pb2.RewriterConfig(memory_optimization=rewriter_config_pb2.RewriterConfig.NO_MEM_OPT)
   elif params.mem_opt == 'intelligent':
     print("intelligent memory optimization")
-    rewriter_config = rewriter_config_pb2.RewriterConfig(memory_optimization=rewriter_config_pb2.RewriterConfig.SWAPPING_HEURISTICS)
+    rewriter_config = rewriter_config_pb2.RewriterConfig(memory_optimization=rewriter_config_pb2.RewriterConfig.SWAPPING_HEURISTICS,
+      mem_opt_elastic_percentage=params.elastic_percentage,
+      custom_mem_opt_use_simpler_strategy = params.use_simpler_strategy,
+      mem_opt_reserve=params.to_reserve
+    )
+  elif params.mem_opt == 'custom':
+    print("custom memory optimization, tensor size:" + str(params.tensor_size) 
+      + ", tensor duration" + str(params.tensor_duration) + ", extreme:" + str(params.extreme) + ", simpler:" + str(params.use_simpler_strategy))
+    rewriter_config = rewriter_config_pb2.RewriterConfig(memory_optimization=rewriter_config_pb2.RewriterConfig.CUSTOM_MEM_OPT,
+      custom_mem_opt_filter_tensor_size = params.tensor_size,
+      custom_mem_opt_filter_tensor_duration = params.tensor_duration,
+      custom_mem_opt_extreme_swap = params.extreme,
+      custom_mem_opt_use_simpler_strategy = params.use_simpler_strategy,
+      mem_opt_elastic_percentage=params.elastic_percentage,
+      mem_opt_reserve=params.to_reserve
+    )
 
   #text_format.Merge(params.rewriter_config, rewriter_config)
   config.graph_options.rewrite_options.CopyFrom(rewriter_config)
@@ -681,7 +706,7 @@ def benchmark_one_step(sess,
   #  run_options = None
   #  run_metadata = None
   summary_str = None
-  #start_time = time.time()
+  start_time = time.time()
   if summary_op is None:
     #results = sess.run(fetches, options=run_options, run_metadata=run_metadata)
     results = sess.run(fetches, options=pengwa_run_options, run_metadata=pengwa_run_metadata) # pengwa
@@ -694,7 +719,7 @@ def benchmark_one_step(sess,
   pengwa_trace = timeline.Timeline(step_stats=pengwa_run_metadata.step_stats)
   pengwa_chrome_trace = pengwa_trace.generate_chrome_trace_format(show_dataflow=True, show_memory=True)
   many_runs_timeline.update_timeline(pengwa_chrome_trace)
-  print("training step pengwa:" + str(step))
+  print("FilterFlag - perf - training step pengwa:" + str(step) + ", session run time is " + str(time.time() - start_time))
   #pengwa_profiler.add_step(step, pengwa_run_metadata) 
 
   #pengwa_opts = (option_builder.ProfileOptionBuilder(
@@ -1559,6 +1584,7 @@ class BenchmarkCNN(object):
     #  bcast_global_variables_op = None
     bcast_global_variables_op = None # pengwa
 
+    '''
     # pengwa
     #sess.graph.get_operation_by_name('adam_optimizer/gradients/pool1/MaxPool_grad/MaxPoolGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(list=attr_value_pb2.AttrValue.ListValue(i=[0, 1])))
     # v/tower_0/cg/conv0/Pad 
@@ -1646,7 +1672,7 @@ class BenchmarkCNN(object):
 
     # v/tower_0/cg/resnet_v13/conv11/conv2d/Conv2D 128M
     tf.get_default_graph().get_operation_by_name('v/tower_0/gradients/v/tower_0/cg/resnet_v13/conv11/batchnorm11/FusedBatchNorm_grad/FusedBatchNormGrad')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=1))
-   
+    '''
 
 
     #tf.get_default_graph().get_operation_by_name('')._set_attr('_swap_to_host', attr_value_pb2.AttrValue(i=0))
@@ -1789,7 +1815,12 @@ class BenchmarkCNN(object):
       loop_end_time = time.time()
 
       # pengwa
-      pengwa_chrome_trace_filename = str(self.params.batch_size) + str(self.params.mem_opt) + "cnn_benchmark"
+      pengwa_chrome_trace_filename = ("./tml/model_" + str(self.params.model) + "-batch_size_" + str(self.params.batch_size) 
+        + "-mem_opt_" + str(self.params.mem_opt) + "-to_reserve_" + str(self.params.to_reserve) 
+        + "-elastic_percentage_" + str(self.params.elastic_percentage) 
+        + "-use_simpler_strategy_" + str(self.params.use_simpler_strategy)
+        + str(time.time()))
+       
       print('Saving pengwa chrome trace  to: %s' % pengwa_chrome_trace_filename)
       many_runs_timeline.save(pengwa_chrome_trace_filename + '.ctf.json')
       print('end')
