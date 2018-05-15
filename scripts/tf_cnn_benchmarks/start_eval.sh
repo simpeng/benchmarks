@@ -9,11 +9,11 @@ then
   exit 2
 fi
 
-run_simpler_batch=false
+run_simple_batch=false
 if [ -n "$3" ]
 then
   echo 'run simple batch only'
-  run_simpler_batch=true
+  run_simple_batch=true
 fi
 
 
@@ -34,7 +34,13 @@ run_vertically() {
     bash process.sh $out_filename
     line_cnt=`wc -l < $out_filename'_analysis.txt'`
     echo "found $line_cnt results that are not OOM"
-   
+ 
+    if [ "$run_simple_batch" = true ] 
+    then
+      echo 'run simple batch only, auto upper finder is disabled'
+      break
+    fi
+  
     if [ $line_cnt = 5 ]
     then
       lower_pass=$batch_size
@@ -60,24 +66,19 @@ run_vertically() {
     fi
     
 
-    if [ run_simple_batch = true ] 
-    then
-      echo 'run simple batch only, auto upper finder is disabled'
-      break
-    fi
   done
 }
 
 # off memory explicitly
-other_params='--mem_opt off'
-echo 'running first set experiments - memopt=off'
-run_vertically $model_name $start_batch_size "$other_params"
+#other_params='--mem_opt off'
+#echo 'running first set experiments - memopt=off'
+#run_vertically $model_name $start_batch_size "$other_params"
 
 
 # default intelligent memory explicitly
-other_params='--mem_opt intelligent'
-echo 'running second set experiments - memopt=intelligent'
-run_vertically $model_name $start_batch_size "$other_params"
+#other_params='--mem_opt intelligent'
+#echo 'running second set experiments - memopt=intelligent'
+#run_vertically $model_name $start_batch_size "$other_params"
 
 
 echo 'running third set experiments - memopt=intelligent with elastic_percentage'

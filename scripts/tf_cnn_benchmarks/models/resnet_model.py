@@ -237,6 +237,8 @@ class ResnetModel(model_lib.Model):
 def create_resnet50_model():
   return ResnetModel('resnet50', (3, 4, 6, 3))
 
+def create_resnet482_model():
+  return ResnetModel('resnet482', (30, 40, 60, 30))
 
 def create_resnet50_v2_model():
   return ResnetModel('resnet50_v2', (3, 4, 6, 3))
@@ -245,6 +247,24 @@ def create_resnet50_v2_model():
 def create_resnet101_model():
   return ResnetModel('resnet101', (3, 4, 23, 3))
 
+def create_resnet200_model():
+  return ResnetModel('resnet200', (6, 8, 46, 6))
+
+def create_resnet299_model():
+  return ResnetModel('resnet299', (9, 12, 69, 9))
+
+def create_resnet398_model():
+  return ResnetModel('resnet398', (12, 16, 92, 12))
+
+
+def create_resnet497_model():
+  return ResnetModel('resnet497', (15, 20, 115, 15))
+
+def create_resnet893_model():
+  return ResnetModel('resnet893', (27, 36, 207,27))
+
+def create_resnet992_model():
+  return ResnetModel('resnet992', (30, 40, 230,30))
 
 def create_resnet101_v2_model():
   return ResnetModel('resnet101_v2', (3, 4, 23, 3))
@@ -253,6 +273,11 @@ def create_resnet101_v2_model():
 def create_resnet152_model():
   return ResnetModel('resnet152', (3, 8, 36, 3))
 
+def create_resnet950_model():
+  return ResnetModel('resnet950', (18, 64, 216, 18))
+
+def create_resnet1502_model():
+  return ResnetModel('resnet1502', (30, 80, 360, 30))
 
 def create_resnet152_v2_model():
   return ResnetModel('resnet152_v2', (3, 8, 36, 3))
